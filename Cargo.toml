@@ -1,8 +1,9 @@
 [package]
 name = "rgui"
 version = "0.1.0"
-authors = ["Dmitri"]
+authors = ["Dmitri Melnikov"]
 edition = "2018"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,6 +12,8 @@ anyhow = "1"
 crossbeam-channel = "0.4"
 crossterm = "0.17"
 grep = "0.2"
+ignore = "0.4"
+parking_lot = "0.10"
+regex = "1"
 tui = { version = "0.9", default-features = false, features = ["crossterm"] }
 unicode-width = "0.1"
-walkdir = "2"

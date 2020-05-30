@@ -1,21 +1,23 @@
-use anyhow::{anyhow, Result};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use anyhow::Result;
+use crossbeam_channel::{bounded, Receiver, Sender};
 use crossterm::{
     cursor::MoveTo,
-    event::{poll, read, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, read, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use grep::{
     regex::RegexMatcher,
     searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkError, SinkMatch},
 };
+use ignore::{DirEntry, WalkBuilder, WalkState};
+use parking_lot::{Condvar, Mutex};
 use std::{
     env,
     ffi::{OsStr, OsString},
     io::{self, Write},
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tui::{
     backend::CrosstermBackend,
@@ -25,11 +27,10 @@ use tui::{
     Terminal,
 };
 use unicode_width::UnicodeWidthStr;
-use walkdir::WalkDir;
 
 const TICK_RATE: Duration = Duration::from_millis(100);
 
-enum Event {
+enum UiEvent {
     Input(KeyEvent),
     MatchFound { path: OsString, line: u64, text: String },
     Tick,
@@ -60,11 +61,11 @@ impl SinkError for TxSinkError {
 
 struct TxSink {
     path: OsString,
-    tx: Sender<Event>,
+    tx: Sender<UiEvent>,
 }
 
 impl TxSink {
-    fn new(path: &OsStr, tx: Sender<Event>) -> Self {
+    fn new(path: &OsStr, tx: Sender<UiEvent>) -> Self {
         TxSink { path: path.to_owned(), tx }
     }
 }
@@ -74,7 +75,7 @@ impl Sink for TxSink {
 
     fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch) -> Result<bool, Self::Error> {
         let res = String::from_utf8_lossy(mat.bytes());
-        let ev = Event::MatchFound {
+        let ev = UiEvent::MatchFound {
             path: self.path.clone(),
             line: mat.line_number().unwrap_or_default(),
             text: res.to_string(),
@@ -85,31 +86,38 @@ impl Sink for TxSink {
 }
 
 struct Events {
-    rx: Receiver<Event>,
-    _search_state: Arc<Mutex<SearchState>>,
+    ui_events: Receiver<UiEvent>,
+    search_state: Arc<(Mutex<SearchState>, Condvar)>,
     _input_handle: thread::JoinHandle<()>,
     _result_handle: thread::JoinHandle<()>,
-    _tick_handle: thread::JoinHandle<()>,
 }
 
 impl Events {
     fn new() -> Events {
-        let (tx, rx) = unbounded();
-        let search_state = Arc::new(Mutex::new(SearchState::Done));
+        let (ui_tx, ui_rx) = bounded(1000);
+        let search_state = Arc::new((Mutex::new(SearchState::Done), Condvar::new()));
 
         let input_handle = {
-            let tx = tx.clone();
+            let tx = ui_tx.clone();
             thread::spawn(move || {
                 let handle_events = || -> Result<()> {
+                    let mut last_tick = Instant::now();
                     loop {
-                        if poll(TICK_RATE)? {
+                        if event::poll(
+                            TICK_RATE.checked_sub(last_tick.elapsed()).unwrap_or_default(),
+                        )? {
                             match read()? {
                                 TermEvent::Key(ev) => {
-                                    tx.send(Event::Input(ev))?;
+                                    tx.send(UiEvent::Input(ev))?;
                                 }
                                 TermEvent::Mouse(..) => (),  // ignore
                                 TermEvent::Resize(..) => (), // ignore
                             }
+                        }
+
+                        if last_tick.elapsed() >= TICK_RATE {
+                            tx.send(UiEvent::Tick)?;
+                            last_tick = Instant::now();
                         }
                     }
                 };
@@ -122,14 +130,13 @@ impl Events {
         };
 
         let result_handle = {
-            let tx = tx.clone();
             let search_state = search_state.clone();
             thread::spawn(move || {
                 let handle_search = || -> Result<()> {
-                    'search: loop {
+                    loop {
                         let (search_pattern, search_paths) = {
-                            let mut state =
-                                search_state.lock().map_err(|_| anyhow!("mutex poisoned"))?;
+                            let (ref search_mutex, ref start_anew) = &*search_state;
+                            let mut state = search_mutex.lock();
 
                             let search_pattern: String;
                             let search_paths: Vec<OsString>;
@@ -152,6 +159,7 @@ impl Events {
                                     );
                                 }
                                 SearchState::Done => {
+                                    start_anew.wait(&mut state);
                                     continue;
                                 }
                             }
@@ -159,39 +167,58 @@ impl Events {
                             (search_pattern, search_paths)
                         };
 
-                        let matcher = RegexMatcher::new_line_matcher(&search_pattern)?;
-                        let mut searcher = SearcherBuilder::new()
-                            .binary_detection(BinaryDetection::quit(b'\x00'))
-                            .line_number(true)
-                            .build();
+                        // validate once here, so that we can simply unwrap in each parallel worker later
+                        let _ = RegexMatcher::new_line_matcher(&search_pattern)?;
 
-                        for path in search_paths {
-                            for entry in WalkDir::new(&path) {
-                                let entry = entry?;
+                        let (first, rest) = search_paths.split_first().expect("empty path list");
+                        let mut walker = WalkBuilder::new(first);
+                        for path in rest {
+                            walker.add(path);
+                        }
+                        walker.build_parallel().run(|| {
+                            let tx = ui_tx.clone();
+                            let search_pattern = search_pattern.clone();
+                            let search_state = search_state.clone();
 
-                                if !entry.file_type().is_file() {
-                                    continue;
+                            Box::new(move |entry: Result<DirEntry, ignore::Error>| {
+                                let (ref search_mutex, _) = &*search_state;
+
+                                let entry = match entry {
+                                    Ok(entry) => entry,
+                                    Err(err) => {
+                                        eprintln!("{}", err);
+                                        return WalkState::Skip;
+                                    }
+                                };
+
+                                if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(true) {
+                                    return WalkState::Continue;
                                 }
 
-                                if search_state
-                                    .lock()
-                                    .map_err(|_| anyhow!("mutex poisoned"))?
-                                    .is_new()
-                                {
-                                    continue 'search;
+                                if search_mutex.lock().is_new() {
+                                    return WalkState::Quit;
                                 }
 
                                 let sink = TxSink::new(&entry.path().as_os_str(), tx.clone());
+
+                                let matcher =
+                                    RegexMatcher::new_line_matcher(&search_pattern).unwrap();
+                                let mut searcher = SearcherBuilder::new()
+                                    .binary_detection(BinaryDetection::quit(b'\x00'))
+                                    .line_number(true)
+                                    .build();
+
                                 searcher.search_path(&matcher, entry.path(), sink).unwrap_or_else(
                                     |err| {
                                         eprintln!("{}: {}", entry.path().display(), err.0);
                                     },
                                 );
-                            }
-                        }
 
-                        *search_state.lock().map_err(|_| anyhow!("mutex poisoned"))? =
-                            SearchState::Done;
+                                WalkState::Continue
+                            })
+                        });
+
+                        *search_state.0.lock() = SearchState::Done;
                     }
                 };
 
@@ -202,30 +229,22 @@ impl Events {
             })
         };
 
-        let tick_handle = thread::spawn(move || loop {
-            if let Err(err) = tx.send(Event::Tick) {
-                eprintln!("failed to send tick event: {}", err);
-                std::process::exit(1);
-            }
-            thread::sleep(TICK_RATE);
-        });
-
         Events {
-            rx,
-            _search_state: search_state,
+            ui_events: ui_rx,
+            search_state,
             _input_handle: input_handle,
             _result_handle: result_handle,
-            _tick_handle: tick_handle,
         }
     }
 
-    fn next(&self) -> Result<Event, crossbeam_channel::RecvError> {
-        self.rx.recv()
+    fn next(&self) -> Result<UiEvent, crossbeam_channel::RecvError> {
+        self.ui_events.recv()
     }
 
     fn new_search(&mut self, pattern: &str, paths: &[OsString]) -> Result<()> {
-        let mut state = self._search_state.lock().map_err(|_| anyhow!("mutex poisoned"))?;
-        *state = SearchState::New { pattern: pattern.to_owned(), paths: paths.to_owned() };
+        *self.search_state.0.lock() =
+            SearchState::New { pattern: pattern.to_owned(), paths: paths.to_owned() };
+        self.search_state.1.notify_one();
         Ok(())
     }
 }
@@ -270,10 +289,9 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
                 .constraints(
                     [
-                        Constraint::Length(dimensions.height - 3 - 2),
+                        Constraint::Length(dimensions.height - 3),
                         Constraint::Length(3),
                         Constraint::Min(1),
                     ]
@@ -281,8 +299,11 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
                 )
                 .split(dimensions);
 
-            let results = List::new(app.results.iter().map(|r| Text::raw(r)))
-                .block(Block::default().borders(Borders::ALL).title("Results"));
+            let results_title = format!("Results ({})", app.results.len());
+            let results = List::new(
+                app.results.iter().take(usize::from(dimensions.height) - 3).map(Text::raw),
+            )
+            .block(Block::default().borders(Borders::ALL).title(&results_title));
             f.render_widget(results, chunks[0]);
 
             let text = [Text::raw(&app.pattern)];
@@ -296,41 +317,50 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
         write!(
             terminal.backend_mut(),
             "{}",
-            MoveTo(2 + app.pattern.width() as u16, dimensions.height - 3)
+            MoveTo(1 + app.pattern.width() as u16, dimensions.height - 2)
         )?;
         io::stdout().flush()?;
 
-        match events.next()? {
-            Event::Input(ev) => {
-                let mod_keys_used = ev.modifiers & (KeyModifiers::ALT | KeyModifiers::CONTROL)
-                    != KeyModifiers::NONE;
+        loop {
+            match events.next()? {
+                UiEvent::Input(ev) => {
+                    let mod_keys_used = ev.modifiers & (KeyModifiers::ALT | KeyModifiers::CONTROL)
+                        != KeyModifiers::NONE;
 
-                match ev.code {
-                    KeyCode::Char('\n') => {} // ignore
-                    KeyCode::Char(ch) if !mod_keys_used => {
-                        app.pattern.push(ch);
-                        app.results.clear();
-                        events.new_search(&app.pattern, &app.search_paths)?;
+                    match ev.code {
+                        KeyCode::Char('\n') => {} // ignore
+                        KeyCode::Char(ch) if !mod_keys_used => {
+                            app.pattern.push(ch);
+                            app.results.clear();
+                            events.new_search(&app.pattern, &app.search_paths)?;
+                            break;
+                        }
+                        KeyCode::Backspace => {
+                            app.pattern.pop();
+                            app.results.clear();
+                            if regex::Regex::new(&app.pattern).is_ok() {
+                                events.new_search(&app.pattern, &app.search_paths)?;
+                                //TODO: show in pattern block title that pattern is invalid
+                            }
+                            break;
+                        }
+                        KeyCode::Esc => {
+                            disable_raw_mode()?;
+                            terminal.clear()?;
+                            std::process::exit(0);
+                        }
+                        _ => {} // ignore
                     }
-                    KeyCode::Backspace => {
-                        app.pattern.pop();
-                        app.results.clear();
-                        events.new_search(&app.pattern, &app.search_paths)?;
-                    }
-                    KeyCode::Esc => {
-                        disable_raw_mode()?;
-                        terminal.clear()?;
-                        std::process::exit(0);
-                    }
-                    _ => {} // ignore
+                }
+
+                UiEvent::MatchFound { path, line, text } => {
+                    app.results.push(format!("{}:{} {}", path.to_string_lossy(), line, text));
+                }
+
+                UiEvent::Tick => {
+                    break;
                 }
             }
-
-            Event::MatchFound { path, line, text } => {
-                app.results.push(format!("{}:{} {}", path.to_string_lossy(), line, text));
-            }
-
-            Event::Tick => {} // do nothing
         }
     }
 }
