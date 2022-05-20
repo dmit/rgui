@@ -1,3 +1,12 @@
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    io::{self, Write},
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
+
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossterm::{
@@ -11,19 +20,12 @@ use grep::{
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use parking_lot::{Condvar, Mutex};
-use std::{
-    env,
-    ffi::{OsStr, OsString},
-    io::{self, Write},
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, List, Paragraph, Text},
+    text::Text,
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
 use unicode_width::UnicodeWidthStr;
@@ -43,20 +45,13 @@ enum SearchState {
 }
 
 impl SearchState {
-    fn is_new(&self) -> bool {
-        match self {
-            SearchState::New { .. } => true,
-            _ => false,
-        }
-    }
+    fn is_new(&self) -> bool { matches!(self, SearchState::New { .. }) }
 }
 
 struct TxSinkError(String);
 
 impl SinkError for TxSinkError {
-    fn error_message<T: std::fmt::Display>(message: T) -> Self {
-        TxSinkError(message.to_string())
-    }
+    fn error_message<T: std::fmt::Display>(message: T) -> Self { TxSinkError(message.to_string()) }
 }
 
 struct TxSink {
@@ -65,9 +60,7 @@ struct TxSink {
 }
 
 impl TxSink {
-    fn new(path: &OsStr, tx: Sender<UiEvent>) -> Self {
-        TxSink { path: path.to_owned(), tx }
-    }
+    fn new(path: &OsStr, tx: Sender<UiEvent>) -> Self { TxSink { path: path.to_owned(), tx } }
 }
 
 impl Sink for TxSink {
@@ -167,7 +160,8 @@ impl Events {
                             (search_pattern, search_paths)
                         };
 
-                        // validate once here, so that we can simply unwrap in each parallel worker later
+                        // validate once here, so that we can simply unwrap in each parallel worker
+                        // later
                         let _ = RegexMatcher::new_line_matcher(&search_pattern)?;
 
                         let (first, rest) = search_paths.split_first().expect("empty path list");
@@ -199,7 +193,7 @@ impl Events {
                                     return WalkState::Quit;
                                 }
 
-                                let sink = TxSink::new(&entry.path().as_os_str(), tx.clone());
+                                let sink = TxSink::new(entry.path().as_os_str(), tx.clone());
 
                                 let matcher =
                                     RegexMatcher::new_line_matcher(&search_pattern).unwrap();
@@ -237,9 +231,7 @@ impl Events {
         }
     }
 
-    fn next(&self) -> Result<UiEvent, crossbeam_channel::RecvError> {
-        self.ui_events.recv()
-    }
+    fn next(&self) -> Result<UiEvent, crossbeam_channel::RecvError> { self.ui_events.recv() }
 
     fn new_search(&mut self, pattern: &str, paths: &[OsString]) -> Result<()> {
         *self.search_state.0.lock() =
@@ -284,7 +276,7 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
     loop {
         let mut dimensions = terminal.size()?;
 
-        terminal.draw(|mut f| {
+        terminal.draw(|f| {
             dimensions = f.size();
 
             let chunks = Layout::default()
@@ -300,14 +292,18 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
                 .split(dimensions);
 
             let results_title = format!("Results ({})", app.results.len());
-            let results = List::new(
-                app.results.iter().take(usize::from(dimensions.height) - 3).map(Text::raw),
-            )
-            .block(Block::default().borders(Borders::ALL).title(&results_title));
-            f.render_widget(results, chunks[0]);
+            let results = app
+                .results
+                .iter()
+                .take(usize::from(dimensions.height) - 3)
+                .map(Text::raw)
+                .map(ListItem::new)
+                .collect::<Vec<_>>();
+            let results_list = List::new(results)
+                .block(Block::default().borders(Borders::ALL).title(results_title));
+            f.render_widget(results_list, chunks[0]);
 
-            let text = [Text::raw(&app.pattern)];
-            let input = Paragraph::new(text.iter())
+            let input = Paragraph::new(Text::raw(&app.pattern))
                 .style(Style::default().fg(Color::Yellow))
                 .block(Block::default().borders(Borders::ALL).title("Pattern"));
             f.render_widget(input, chunks[1]);
@@ -340,7 +336,8 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
                             app.results.clear();
                             if regex::Regex::new(&app.pattern).is_ok() {
                                 events.new_search(&app.pattern, &app.search_paths)?;
-                                //TODO: show in pattern block title that pattern is invalid
+                                //TODO: show in pattern block title that
+                                // pattern is invalid
                             }
                             break;
                         }

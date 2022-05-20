@@ -1,19 +1,16 @@
 [package]
 name = "rgui"
-version = "0.1.0"
-authors = ["Dmitri Melnikov"]
-edition = "2018"
+version = "0.2.0"
+edition = "2021"
 publish = false
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-anyhow = "1"
-crossbeam-channel = "0.4"
-crossterm = "0.17"
-grep = "0.2"
-ignore = "0.4"
-parking_lot = "0.10"
-regex = "1"
-tui = { version = "0.9", default-features = false, features = ["crossterm"] }
-unicode-width = "0.1"
+anyhow = "1.0.57"
+crossbeam-channel = "0.5.4"
+crossterm = "0.23.2"
+grep = "0.2.8"
+ignore = "0.4.18"
+parking_lot = "0.12.0"
+regex = "1.5.5"
+tui = { version = "0.18.0", default-features = false, features = ["crossterm"] }
+unicode-width = "0.1.9"
