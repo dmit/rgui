@@ -11,7 +11,7 @@ use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossterm::{
     cursor::MoveTo,
-    event::{self, read, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, read, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use grep::{
@@ -103,8 +103,10 @@ impl Events {
                                 TermEvent::Key(ev) => {
                                     tx.send(UiEvent::Input(ev))?;
                                 }
-                                TermEvent::Mouse(..) => (),  // ignore
-                                TermEvent::Resize(..) => (), // ignore
+                                TermEvent::FocusGained
+                                | TermEvent::FocusLost
+                                | TermEvent::Mouse(..)
+                                | TermEvent::Resize(..) => (), // ignore
                             }
                         }
 
@@ -320,18 +322,35 @@ fn render_ui(app: &mut App, events: &mut Events) -> Result<()> {
         loop {
             match events.next()? {
                 UiEvent::Input(ev) => {
-                    let mod_keys_used = ev.modifiers & (KeyModifiers::ALT | KeyModifiers::CONTROL)
-                        != KeyModifiers::NONE;
+                    let mod_keys_used = !(ev.modifiers == KeyModifiers::NONE
+                        || ev.modifiers == KeyModifiers::SHIFT);
 
                     match ev.code {
                         KeyCode::Char('\n') => {} // ignore
-                        KeyCode::Char(ch) if !mod_keys_used => {
+                        KeyCode::Char('c')
+                            if ev.kind == KeyEventKind::Press
+                                && ev.modifiers == KeyModifiers::CONTROL =>
+                        {
+                            app.pattern.clear();
+                            app.results.clear();
+                            break;
+                        }
+                        KeyCode::Char(ch)
+                            if !mod_keys_used
+                                && (ev.kind == KeyEventKind::Press
+                                    || ev.kind == KeyEventKind::Repeat) =>
+                        {
                             app.pattern.push(ch);
                             app.results.clear();
+                            //TODO: if the key event kind is Repeat, only trigger a new search when
+                            // the key is released
                             events.new_search(&app.pattern, &app.search_paths)?;
                             break;
                         }
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace
+                            if ev.kind == KeyEventKind::Press
+                                || ev.kind == KeyEventKind::Repeat =>
+                        {
                             app.pattern.pop();
                             app.results.clear();
                             if regex::Regex::new(&app.pattern).is_ok() {
