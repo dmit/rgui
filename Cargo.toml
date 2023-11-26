@@ -5,9 +5,10 @@ edition = "2021"
 publish = false
 
 [dependencies]
-anyhow = { version = "1.0.75", default-features = false, features = ["std"] }
+argh = { version = "0.1.12", default-features = false }
 crossbeam-channel = { version = "0.5.8", default-features = false, features = ["std"] }
 crossterm = { version = "0.27.0", default-features = false, features = ["events", "windows"] }
+eyre = { version = "0.6.9", default-features = false, features = ["auto-install", "track-caller"] }
 grep = { version = "0.2.12", default-features = false }
 ignore = { version = "0.4.20", default-features = false }
 parking_lot = { version = "0.12.1", default-features = false }

@@ -1,9 +1,18 @@
 # rgui
 
-A basic terminal GUI for searching text files.
+A basic terminal UI for searching text files using regular expressions.
+
+```console
+$ rgui [-p <pattern>] [<search_paths...>]
+```
 
 ```
-$ rgui <PATTERN> <PATH...>
+Positional Arguments:
+  search_paths      list of paths to search
+
+Options:
+  -p, --pattern     pattern to search for
+  --help            display usage information
 ```
 
 ## TODO
@@ -14,7 +23,8 @@ $ rgui <PATTERN> <PATH...>
 - [ ] Basic edit controls on the pattern field (move cursor left/right, select all, etc).
 - [ ] Navigation of results and, possibly, ability to launch `$EDITOR` on files at the line where the currently selected match was found.
 - [ ] Restore previous console state after quitting instead of clearing the screen.
-- [ ] A `--help` flag?
+- [x] A `--help` flag?
+- [ ] Show an error in case of a malformed search pattern.
 
 ## License
 
