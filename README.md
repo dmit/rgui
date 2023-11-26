@@ -28,4 +28,4 @@ Options:
 
 ## License
 
-[The Unlicense](LICENSE).
+[0BSD](LICENSE.txt).

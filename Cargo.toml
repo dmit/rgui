@@ -1,6 +1,8 @@
 [package]
 name = "rgui"
-version = "0.2.0"
+version = "0.3.0"
+license = "0BSD"
+license-file = "LICENSE.txt"
 edition = "2021"
 publish = false
 
