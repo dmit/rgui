@@ -23,7 +23,7 @@ fn main() -> eyre::Result<()> {
     let opts: Opts = argh::from_env();
 
     let search_paths =
-        if !opts.search_paths.is_empty() { opts.search_paths } else { vec![OsString::from("./")] };
+        if !opts.search_paths.is_empty() { opts.search_paths } else { vec![OsString::from(".")] };
 
     let mut app = ui::App::new(search_paths, opts.pattern)?;
     app.render()?;

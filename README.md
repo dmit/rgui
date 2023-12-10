@@ -25,6 +25,8 @@ Options:
 - [ ] Restore previous console state after quitting instead of clearing the screen.
 - [x] A `--help` flag?
 - [ ] Show an error in case of a malformed search pattern.
+- [ ] Make search-as-you-type optional, and prefer search-on-return by default.
+- [ ] Highlight matches in the results window.
 
 ## License
 

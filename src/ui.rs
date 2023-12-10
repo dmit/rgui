@@ -18,7 +18,7 @@ use grep::{
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use parking_lot::{Condvar, Mutex};
-use tui::{
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
@@ -33,6 +33,7 @@ const TICK_RATE: Duration = Duration::from_millis(100);
 enum UiEvent {
     Input(KeyEvent),
     MatchFound { path: OsString, line: u64, text: String },
+    Paste(String),
     Tick,
 }
 
@@ -100,6 +101,9 @@ impl Events {
                             match read()? {
                                 TermEvent::Key(ev) => {
                                     tx.send(UiEvent::Input(ev))?;
+                                }
+                                TermEvent::Paste(str) => {
+                                    tx.send(UiEvent::Paste(str))?;
                                 }
                                 TermEvent::FocusGained
                                 | TermEvent::FocusLost
@@ -279,14 +283,11 @@ impl App {
 
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints(
-                        [
-                            Constraint::Length(dimensions.height - 3),
-                            Constraint::Length(3),
-                            Constraint::Min(1),
-                        ]
-                        .as_ref(),
-                    )
+                    .constraints([
+                        Constraint::Length(dimensions.height - 4), // results
+                        Constraint::Length(3),                     // input pattern
+                        Constraint::Min(1),                        // status message
+                    ])
                     .split(dimensions);
 
                 let results_title = format!("Results ({})", self.results.len());
@@ -368,6 +369,12 @@ impl App {
 
                     UiEvent::MatchFound { path, line, text } => {
                         self.results.push(format!("{}:{} {}", path.to_string_lossy(), line, text));
+                    }
+
+                    UiEvent::Paste(str) => {
+                        self.pattern.push_str(&str);
+                        self.results.clear();
+                        self.events.new_search(&self.pattern, self.search_paths.clone())?;
                     }
 
                     UiEvent::Tick => {
