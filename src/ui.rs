@@ -6,10 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use crossterm::{
     cursor::MoveTo,
-    event::{self, read, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, read},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use grep::{
@@ -19,12 +19,12 @@ use grep::{
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use parking_lot::{Condvar, Mutex};
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     text::Text,
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal,
 };
 use unicode_width::UnicodeWidthStr;
 
