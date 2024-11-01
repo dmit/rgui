@@ -20,7 +20,7 @@ use ignore::{DirEntry, WalkBuilder, WalkState};
 use parking_lot::{Condvar, Mutex};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     text::Text,
     widgets::{Block, Borders, List, ListItem, Paragraph},
@@ -276,10 +276,10 @@ impl App {
 
         terminal.clear()?;
         loop {
-            let mut dimensions = terminal.size()?;
+            let mut dimensions = Rect::from((Position::ORIGIN, terminal.size()?));
 
             terminal.draw(|f| {
-                dimensions = f.size();
+                dimensions = f.area();
 
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
