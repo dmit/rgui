@@ -2,12 +2,12 @@
 name = "rgui"
 version = "0.4.0"
 license = "0BSD"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
-argh = { version = "0.1.12", default-features = false }
-crossbeam-channel = { version = "0.5.13", default-features = false, features = ["std"] }
+argh = { version = "0.1.13", default-features = false }
+crossbeam-channel = { version = "0.5.14", default-features = false, features = ["std"] }
 crossterm = { version = "0.28.1", default-features = false, features = ["events", "windows"] }
 eyre = { version = "0.6.12", default-features = false, features = ["auto-install", "track-caller"] }
 grep = { version = "0.3.2", default-features = false }

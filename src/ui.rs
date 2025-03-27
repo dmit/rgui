@@ -132,7 +132,7 @@ impl Events {
                 let handle_search = || -> eyre::Result<()> {
                     loop {
                         let (search_pattern, search_paths) = {
-                            let (ref search_mutex, ref start_anew) = &*search_state;
+                            let (search_mutex, start_anew) = &*search_state;
                             let mut state = search_mutex.lock();
 
                             let search_pattern: String;
@@ -179,7 +179,7 @@ impl Events {
                             let search_state = search_state.clone();
 
                             Box::new(move |entry: Result<DirEntry, ignore::Error>| {
-                                let (ref search_mutex, _) = &*search_state;
+                                let (search_mutex, _) = &*search_state;
 
                                 let entry = match entry {
                                     Ok(entry) => entry,
