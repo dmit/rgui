@@ -120,7 +120,7 @@ impl Events {
                 };
 
                 if let Err(err) = handle_events() {
-                    eprintln!("failed to read event: {}", err);
+                    eprintln!("failed to read event: {err}");
                     std::process::exit(1);
                 }
             })
@@ -184,7 +184,7 @@ impl Events {
                                 let entry = match entry {
                                     Ok(entry) => entry,
                                     Err(err) => {
-                                        eprintln!("{}", err);
+                                        eprintln!("{err}");
                                         return WalkState::Skip;
                                     }
                                 };
@@ -221,7 +221,7 @@ impl Events {
                 };
 
                 if let Err(err) = handle_search() {
-                    eprintln!("search failed: {}", err);
+                    eprintln!("search failed: {err}");
                     std::process::exit(1);
                 }
             })
